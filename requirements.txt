@@ -1,0 +1,19 @@
+fastapi
+uvicorn[standard]
+supabase
+google-genai
+pypdf
+reportlab
+apscheduler
+resend
+twilio
+python-multipart
+python-jose[cryptography]
+python-dotenv
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-grpc
+# omium — install from sponsor-provided source if not on PyPI
+# pip install omium  (or the wheel/URL provided at the hackathon)
+# If unavailable, the system falls back to OpenTelemetry/Jaeger automatically
+omium

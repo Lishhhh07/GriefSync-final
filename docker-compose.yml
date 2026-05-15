@@ -1,0 +1,11 @@
+# This file starts Jaeger for local tracing only.
+# Run backend and frontend separately per README quickstart.
+# Backend: set -a && source .env && set +a && uvicorn backend.main:app --reload --port 8000
+# Frontend: cd frontend && npm run dev
+version: "3"
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4317:4317"
