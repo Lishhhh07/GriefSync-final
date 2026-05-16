@@ -156,9 +156,7 @@ def start_span(workflow_id: str, name: str, parent_span_id: str = None) -> str:
                 parent_id = _spans[parent_span_id].span_id
 
             # Determine span_type based on name
-            span_type = "tool"
-            if "workflow" in name.lower() or "agent" in name.lower():
-                span_type = "agent"
+            span_type = "function"
 
             # Create a real Omium Span object
             span = Span(
@@ -193,9 +191,9 @@ def end_span(span_id: str, output: dict = None, error: str = None):
             if output:
                 span.set_output(output)
 
-            # Only set error for actual exceptions, not informational statuses
+            # Only report REAL errors to Omium — skip informational statuses entirely
+            is_real_error = False
             if error:
-                # Distinguish real errors from informational messages
                 is_real_error = any(kw in error.lower() for kw in [
                     "exception", "traceback", "failed", "timeout",
                     "connection", "refused", "denied", "invalid",
@@ -203,9 +201,11 @@ def end_span(span_id: str, output: dict = None, error: str = None):
                 ])
                 if is_real_error:
                     span.set_error(Exception(error))
-                else:
-                    # Treat as informational output, not an error
-                    span.set_output({"info": error, **(output or {})})
+                # Non-critical messages: just ignore them, don't put in span at all
+
+            # If no error, explicitly mark as successful
+            if not is_real_error and not output:
+                span.set_output({"status": "success"})
 
             # End the span
             span.end()

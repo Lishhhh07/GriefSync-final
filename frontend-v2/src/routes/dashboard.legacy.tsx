@@ -19,6 +19,9 @@ function LegacyPage() {
   const [editMode, setEditMode] = useState(false);
   const [editText, setEditText] = useState("");
   const [selectedRecipient, setSelectedRecipient] = useState("all");
+  const [createMode, setCreateMode] = useState(false);
+  const [newMsg, setNewMsg] = useState("");
+  const [newRecipient, setNewRecipient] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -84,6 +87,26 @@ function LegacyPage() {
             These messages will be delivered to your loved ones when the time comes. Write from the heart.
           </p>
 
+          {/* Create / Write button — always visible */}
+          {!editMode && !createMode && (
+            <div className="mt-6 flex items-center gap-3">
+              {obituary.draft && (
+                <button
+                  onClick={() => { setEditMode(true); setEditText(obituary.draft || ""); }}
+                  className="rounded-full border border-ivory/20 px-5 py-2.5 text-[13px] text-ivory/70 transition-all hover:border-gold/40 hover:text-ivory"
+                >
+                  ✎ Edit message
+                </button>
+              )}
+              <button
+                onClick={() => { setCreateMode(true); setNewMsg(""); setNewRecipient(""); }}
+                className="rounded-full bg-gold/90 px-5 py-2.5 text-[13px] font-medium text-background transition-all hover:bg-gold hover:-translate-y-px"
+              >
+                + Create new message
+              </button>
+            </div>
+          )}
+
           {/* Recipient selector */}
           {contacts.length > 0 && (
             <div className="mt-8 flex items-center gap-2">
@@ -113,6 +136,73 @@ function LegacyPage() {
             </span>
             <span className="h-px flex-1 bg-ivory/15" />
           </div>
+
+          {/* Create new message form */}
+          {createMode && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+              <div className="rounded-2xl border border-gold/20 bg-ivory/5 p-6">
+                <div className="text-[10px] uppercase tracking-[0.25em] text-gold mb-4">New message</div>
+                <div className="mb-4">
+                  <label className="mb-1.5 block text-[11px] uppercase tracking-[0.15em] text-ivory/50">For</label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setNewRecipient("")}
+                      className={`rounded-full px-3 py-1.5 text-[11px] transition-colors ${!newRecipient ? "bg-gold/20 text-gold border border-gold/30" : "border border-ivory/10 text-ivory/50 hover:text-ivory/70"}`}
+                    >
+                      Everyone
+                    </button>
+                    {contacts.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setNewRecipient(c.name)}
+                        className={`rounded-full px-3 py-1.5 text-[11px] transition-colors ${newRecipient === c.name ? "bg-gold/20 text-gold border border-gold/30" : "border border-ivory/10 text-ivory/50 hover:text-ivory/70"}`}
+                      >
+                        {c.name}
+                      </button>
+                    ))}
+                    <input
+                      value={newRecipient}
+                      onChange={(e) => setNewRecipient(e.target.value)}
+                      placeholder="Or type a name…"
+                      className="rounded-full border border-ivory/10 bg-transparent px-3 py-1.5 text-[11px] text-ivory/80 placeholder:text-ivory/30 outline-none focus:border-gold/30 w-40"
+                    />
+                  </div>
+                </div>
+                <textarea
+                  value={newMsg}
+                  onChange={(e) => setNewMsg(e.target.value)}
+                  className="w-full min-h-[200px] rounded-xl border border-ivory/10 bg-ivory/5 p-5 font-display text-[16px] leading-[1.8] text-ivory/85 outline-none focus:border-gold/30 resize-none"
+                  placeholder="Write your message here…"
+                />
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    onClick={() => setCreateMode(false)}
+                    className="rounded-full border border-ivory/15 px-4 py-1.5 text-[12px] text-ivory/60 hover:text-ivory"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (newMsg.trim()) {
+                        setObituary({ draft: newMsg, draft_approved: false });
+                        setEditText(newMsg);
+                        setSelectedRecipient(newRecipient || "all");
+                        setCreateMode(false);
+                        setMsg(`Message created for ${newRecipient || "everyone"}`);
+                      }
+                    }}
+                    disabled={!newMsg.trim()}
+                    className="rounded-full bg-gold px-4 py-1.5 text-[12px] font-medium text-background disabled:opacity-50"
+                  >
+                    Save message
+                  </button>
+                  {newRecipient && (
+                    <span className="text-[11px] text-ivory/40">→ {newRecipient}</span>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
 
           {/* Message editor/viewer */}
           {editMode ? (

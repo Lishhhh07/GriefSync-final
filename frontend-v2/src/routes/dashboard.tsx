@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/lib/auth";
 import { apiCheckin, apiUploadPdf } from "@/lib/api";
 import { ContinuityAssistant } from "@/components/assistant";
+import { OmiumWidget } from "@/components/OmiumWidget";
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardLayout,
@@ -203,6 +204,7 @@ function DashboardLayout() {
         </div>
       </div>
       <ContinuityAssistant />
+      <OmiumWidget />
     </div>
   );
 }
