@@ -1,227 +1,272 @@
 # GriefSync
 
-> AI-powered estate readiness for Indian families. Multi-agent autonomous pipeline
-> that extracts assets from PDFs, detects legal conflicts, monitors check-ins, and
-> escalates to trusted contacts — all without human intervention.
+**AI-powered estate readiness for Indian families.**
 
-## Problem
+GriefSync extracts assets from insurance and bank PDFs, detects legal conflicts between nominees and heirs under Indian succession law, generates a will template, and runs a lifeline check-in system that escalates to trusted contacts if the user stops responding — all autonomously, after initial setup.
 
-Indian families lose lakhs in unclaimed insurance and EPF because nominees aren't notified in time. GriefSync autonomously manages estate readiness: it reads your documents, detects legal conflicts, and watches over you — alerting trusted contacts if you stop responding.
+---
 
-## Agent Architecture
+## The Problem
 
-- **Vault Agent** — Extracts structured asset data from insurance/bank PDFs using Gemini
-- **Will Agent** — Detects nominee vs legal heir conflicts using Gemini + Google Search grounding
-- **Lifeline Agent** — State machine that escalates through trusted contacts on check-in miss
-- **Notify Agent** — Dispatches email via Resend; knows nothing about why it's sending
-- **Monitor Agent** — Runs every 6h, detects and auto-corrects broken state
-- **Obituary Agent** — Drafts a personal final message daily, sealed until user approves
+Indian families lose significant wealth in unclaimed insurance policies and EPF accounts because estate documents are scattered, nominees are unaware, and there is no system that watches over readiness continuously. GriefSync solves this with an autonomous multi-agent pipeline that reads documents, detects legal conflicts, monitors user check-ins, and escalates — without requiring human intervention after setup.
+
+---
+
+## Features
+
+- **PDF Vault** — Upload insurance/bank PDFs; Gemini extracts policy numbers, nominees, sums assured, and expiry dates into structured records
+- **Conflict Analysis** — Detects mismatches between named nominees and legal heirs under the Hindu Succession Act and Indian Succession Act, with live Google Search grounding
+- **Will Template** — Generates a downloadable PDF will template based on extracted assets and conflict findings
+- **Lifeline Check-in** — A state machine that escalates through trusted contacts (Day 7 → 14 → 21 → 30) if the user misses check-ins
+- **Estate Score** — A 0–100 completeness score with 30-day trend history and regression alerts
+- **Obituary Drafts** — A daily agent drafts a first-person final message from the user to trusted contacts; sealed until the user approves
+- **Monitor Agent** — Runs every 6 hours to detect and auto-correct orphaned assets, stale escalations, and data anomalies
+- **Distributed Tracing** — Full causal span chains via Omium SDK (with Jaeger fallback for local dev)
+
+---
 
 ## Tech Stack
 
-- **Backend**: Python 3.11, FastAPI, Supabase (PostgreSQL), APScheduler
-- **Frontend**: Next.js 14 (pages router), CSS Modules
-- **LLM**: Google Gemini 2.5 Flash via google-generativeai SDK (free tier)
-- **Email**: Resend (free tier, verified domain)
-- **Tracing**: Omium SDK (primary) + OpenTelemetry/Jaeger (fallback)
-- **Scheduler**: APScheduler AsyncIOScheduler (5 automated jobs)
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.11, FastAPI, APScheduler |
+| Database | Supabase (PostgreSQL) |
+| LLM | Google Gemini 2.5 Flash (`google-generativeai`) |
+| Email | Resend (verified domain `griefsync.codes`) |
+| SMS | Brevo |
+| PDF extraction | pypdf |
+| PDF generation | ReportLab |
+| Tracing | Omium SDK (primary) + OpenTelemetry/Jaeger (fallback) |
+| Frontend | React + Vite (frontend-v2), Tailwind CSS, shadcn/ui, Three.js |
+
+---
+
+## Agent Architecture
+
+Six agents, each with a single responsibility. Agents communicate only through the database — never by calling each other directly. This makes each agent independently testable and crash-isolated.
+
+| Agent | Trigger | LLM | Reads | Writes |
+|---|---|---|---|---|
+| **Vault Agent** | PDF upload / manual entry | Gemini 2.5 Flash | PDF text | `assets` table |
+| **Will Agent** | Analysis queue (every 5 min) | Gemini 2.5 Flash + Google Search | `assets` | `users.conflict_analysis` |
+| **Lifeline Agent** | APScheduler nightly (22:00 IST) | Gemini 2.5 Flash | `escalation_state`, `trusted_contacts` | `escalation_state` |
+| **Notify Agent** | Called by Lifeline/Monitor | None (pure dispatch) | Email/SMS payload | Resend, Brevo APIs |
+| **Monitor Agent** | APScheduler every 6 hours | Gemini 2.5 Flash | All tables | `monitor_log` |
+| **Obituary Agent** | APScheduler daily (9:00 IST) | Gemini 2.5 Flash | `assets`, `trusted_contacts` | `obituaries` |
+
+### Multi-Agent Handoff Flow
+
+```
+PDF Upload
+  → Vault Agent (extract + nominee check)
+    → assets table → analysis_queue
+      → [5min] Will Agent (conflict analysis + Google Search)
+        → users.conflict_analysis
+
+APScheduler nightly
+  → Lifeline Agent (advance escalation state machine)
+    → Notify Agent (email via Resend / SMS via Brevo)
+      → trusted contact clicks JWT-signed webhook URL
+        → /webhook/contact/response
+          → Lifeline Agent (stage2_access)
+            → Notify Agent (full estate summary email)
+
+APScheduler every 6h   → Monitor Agent → auto-corrections → monitor_log
+APScheduler daily 9am  → Obituary Agent → draft (pending user approval)
+APScheduler daily 8am  → Score Tracker → score_history + regression alerts
+```
+
+---
+
+## Project Structure
+
+```
+GriefSync/
+├── backend/
+│   ├── main.py              # FastAPI routes — no business logic, delegates to agents
+│   ├── db.py                # Supabase query helpers
+│   ├── scheduler.py         # APScheduler (5 cron/interval jobs)
+│   ├── auth.py              # JWT helpers for signed webhook URLs
+│   ├── omium_tracer.py      # Tracing wrapper (Omium + OTel fallback)
+│   ├── webhooks.py          # Webhook router
+│   ├── utils.py
+│   └── agents/
+│       ├── vault_agent.py       # PDF extraction + nominee health checks
+│       ├── will_agent.py        # Conflict analysis + PDF generation
+│       ├── lifeline_agent.py    # Escalation state machine
+│       ├── notify_agent.py      # Email/SMS dispatch
+│       ├── monitor_agent.py     # Anomaly detection + auto-correction
+│       └── obituary_agent.py    # Final message drafting
+├── frontend-v2/             # React + Vite frontend
+│   └── src/
+│       ├── components/
+│       │   ├── site/            # Landing page scenes (Hero, Vault, Monitoring, etc.)
+│       │   ├── assistant/       # AI assistant panel
+│       │   ├── three/           # Three.js visual components
+│       │   └── ui/              # shadcn/ui primitives
+├── docker-compose.yml       # Jaeger (local tracing only)
+├── .env.example
+└── seed_demo.py             # Seeds demo user Rahul Sharma
+```
+
+---
 
 ## Quickstart
 
 ### Prerequisites
 
 - Python 3.11+
-- Node.js 18+
-- A free Google AI Studio API key (https://aistudio.google.com)
-- A free Resend API key (https://resend.com)
-- A free Supabase project (https://supabase.com)
-- Optional: Omium SDK (provided by hackathon sponsor) for +10% bonus tracing.
-  If not available, the system automatically uses OpenTelemetry + Jaeger.
+- Node.js 18+ / Bun
+- A [Supabase](https://supabase.com) project (free tier)
+- A [Google AI Studio](https://aistudio.google.com) API key (free, no credit card)
+- A [Resend](https://resend.com) API key (free tier)
+- A [Brevo](https://brevo.com) account for SMS (free credits)
 
-### 1. Clone and install
+### 1. Clone and configure
 
 ```bash
 git clone <repo-url>
 cd GriefSync
-pip install -r requirements.txt
-cd frontend && npm install && cd ..
+cp .env.example .env
+# Fill in all values in .env
 ```
 
-### 2. Configure environment
+### 2. Install backend dependencies
 
 ```bash
-cp .env.example .env
+pip install -r requirements.txt
 ```
 
-Edit `.env` and fill in:
+### 3. Seed the database
 
-```
-GEMINI_API_KEY=your_key_here
-RESEND_API_KEY=your_key_here
-SECRET_KEY=any_random_string_32chars
-SUPABASE_URL=your_supabase_url
-SUPABASE_SERVICE_KEY=your_supabase_service_key
-OMIUM_API_KEY=your_omium_key_here   # optional — for bonus tracing
+```bash
+python -m backend.seed_demo
 ```
 
-### 2.5. Set up the database
+This creates the demo user **Rahul Sharma** with 3 assets (LIC policy, EPF account, SBI savings) and 2 trusted contacts.
 
-1. Go to your Supabase project → SQL Editor
-2. Open `supabase_schema.sql` from the project root
-3. Paste the entire contents and click "Run"
-4. Verify: Table Editor should show 8 tables:
-   `users, assets, trusted_contacts, escalation_state, obituaries, monitor_log, analysis_queue, score_history`
-
-### 3. Start the backend
+### 4. Run the backend
 
 ```bash
 set -a && source .env && set +a
 uvicorn backend.main:app --reload --port 8000
 ```
 
-You should see:
-
-```
-INFO:     Uvicorn running on http://127.0.0.1:8000
-Omium tracing: ACTIVE   <- only if OMIUM_API_KEY is set
-```
-
-### 4. Start the frontend
+### 5. Run the frontend
 
 ```bash
-cd frontend
-npm run dev
+cd frontend-v2
+bun install      # or npm install
+bun dev          # or npm run dev
 ```
 
-Open http://localhost:3000
+Frontend runs at `http://localhost:3000`. Backend at `http://localhost:8000`.
 
-### 5. Seed demo data
+### 6. (Optional) Local tracing with Jaeger
 
 ```bash
-python backend/seed_demo.py
+docker compose up -d
+# Jaeger UI at http://localhost:16686
 ```
 
-This creates a demo user (Rahul Sharma) with 3 assets and 2 trusted contacts.
+---
 
-### 6. Trigger the autonomous pipeline (demo run)
+## Environment Variables
 
-**Step 1 — Add a vault asset manually:**
+```env
+# LLM
+GEMINI_API_KEY=        # aistudio.google.com → free, no credit card
 
-```bash
-curl -X POST http://localhost:8000/api/vault/manual \
-  -H "Content-Type: application/json" \
-  -d '{"asset_type":"LIC","insurer_name":"LIC of India","nominee_name":"Priya Sharma","nominee_relation":"wife","sum_assured":2500000}'
+# Email
+RESEND_API_KEY=        # resend.com → free tier
+
+# SMS
+BREVO_API_KEY=         # brevo.com → free credits
+
+# Database
+SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_KEY=eyJ...   # service_role key — keep secret, backend only
+
+# App
+SECRET_KEY=            # python -c "import secrets; print(secrets.token_hex(32))"
+BASE_URL=http://localhost:8000   # Change to your public URL for webhooks
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+# Tracing
+OMIUM_API_KEY=         # Optional — enables Omium dashboard tracing
+JAEGER_ENDPOINT=http://localhost:4317   # Fallback local tracing
+
+# Demo tuning
+STAGE2_THRESHOLD=1     # Set to 2 for production; 1 makes demo reliable with one contact
 ```
 
-**Step 2 — Trigger Will Agent conflict analysis:**
-
-```bash
-curl -X POST http://localhost:8000/api/will/analyze
-```
-
-**Step 3 — Simulate a missed check-in (14 days overdue):**
-
-```bash
-python backend/override_checkin.py --user-id 1 --days-overdue 14
-```
-
-**Step 4 — Drain the analysis queue immediately:**
-
-```bash
-curl -X POST http://localhost:8000/api/queue/drain
-```
-
-**Step 5 — Check monitor log:**
-
-```bash
-curl http://localhost:8000/api/monitor/log
-```
-
-**Expected Omium trace chain:**
-
-`vault.extract -> vault.nominee_check -> will.web_grounding -> will.conflict_check -> lifeline.escalation_run -> notify.email_dispatch`
-
-## Omium Bonus Tracing
-
-Set `OMIUM_API_KEY` in `.env`. On startup the backend logs:
-
-```
-Omium tracing: ACTIVE
-[omium_tracer] Available Omium methods: [...]
-```
-
-Open the Omium dashboard during the demo to verify the live trace chain with causal links.
+---
 
 ## API Reference
 
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | /health | Health check + timestamp |
-| POST | /api/vault/upload | PDF multipart -> extraction pipeline |
-| POST | /api/vault/manual | JSON asset entry |
-| GET | /api/vault/assets | All assets for user |
-| POST | /api/will/analyze | Trigger conflict analysis |
-| GET | /api/will/pdf | Download will template PDF |
-| POST | /api/ask | AI Q&A with vault context |
-| GET | /api/score | Estate completeness score 0-100 |
-| GET | /api/score/history | 30-day score trend |
-| GET | /api/onboarding/gaps | Actionable gap messages |
-| POST | /api/checkin | Reset check-in timer |
-| POST | /api/lifeline/contacts | Save trusted contacts |
-| GET | /api/lifeline/status | Escalation status |
-| GET | /api/obituary | Current obituary draft |
-| POST | /api/obituary/approve | Approve draft |
-| POST | /api/obituary/draft | Manually trigger draft |
-| GET | /api/queue/status | Analysis queue stats |
-| POST | /api/queue/drain | Immediately drain queue (demo) |
-| GET | /api/monitor/log | Last 20 monitor entries |
-| POST | /webhook/vault/upload-complete | Async extraction trigger |
-| GET | /webhook/contact/response | Trusted contact click handler |
+|---|---|---|
+| GET | `/health` | Health check |
+| POST | `/api/vault/upload` | Upload PDF → extraction pipeline |
+| POST | `/api/vault/manual` | Manual JSON asset entry |
+| GET | `/api/vault/assets` | All assets for user |
+| POST | `/api/will/analyze` | Trigger conflict analysis |
+| GET | `/api/will/pdf` | Download will template PDF |
+| POST | `/api/ask` | AI Q&A with vault context |
+| GET | `/api/score` | Estate completeness score (0–100) |
+| GET | `/api/score/history` | 30-day score trend |
+| GET | `/api/onboarding/gaps` | Actionable gap messages |
+| POST | `/api/checkin` | Reset check-in timer |
+| POST | `/api/lifeline/contacts` | Save trusted contacts |
+| GET | `/api/lifeline/status` | Current escalation status |
+| GET | `/api/obituary` | Current obituary draft |
+| POST | `/api/obituary/approve` | Approve draft for sending |
+| POST | `/api/obituary/draft` | Manually trigger draft |
+| GET | `/api/queue/status` | Analysis queue stats |
+| POST | `/api/queue/drain` | Drain queue immediately (demo) |
+| GET | `/api/monitor/log` | Last 20 monitor entries |
+| POST | `/webhook/vault/upload-complete` | Async extraction trigger |
+| GET | `/webhook/contact/response` | Trusted contact click handler |
 
-## Dependencies
+---
 
-See requirements.txt for the full list. Key packages:
+## Database Schema
 
-- fastapi, uvicorn, supabase, apscheduler
-- google-genai
-- resend
-- python-jose (JWT for webhook tokens)
-- omium (optional, for bonus tracing)
-- reportlab (will PDF generation)
-- pypdf (PDF extraction)
+| Table | Purpose |
+|---|---|
+| `users` | User profile, last check-in timestamp, conflict analysis, stage2 flag |
+| `assets` | Extracted asset records with nominee info and warnings |
+| `trusted_contacts` | Contacts with confirmation status and notification timestamps |
+| `escalation_state` | Current escalation day and last action timestamp per user |
+| `obituaries` | Draft final messages, stored sealed until user approves |
+| `monitor_log` | Monitor agent run history with detected issues and actions taken |
+| `analysis_queue` | Async will-analysis jobs queued on asset change |
+| `score_history` | Daily estate completeness scores with breakdown |
 
-## Demo Setup — Make webhooks reachable
+---
 
-If demoing with judges clicking real email links, expose the backend publicly:
+## Tracing
 
-**Option A — ngrok (recommended for hackathon):**
+All Gemini calls and agent actions are traced as named spans using `backend/omium_tracer.py`. Span naming convention: `module.action` (e.g. `vault.extract`, `will.conflict_check`, `lifeline.escalation_run`).
 
-```bash
-ngrok http 8000
-# Copy the https URL from ngrok output (e.g. https://abc123.ngrok.io)
-# Add to .env: BASE_URL=https://abc123.ngrok.io
-# Restart backend
-```
+Webhook handlers use `link_webhook()` to connect inbound responses back to the workflow that triggered them, creating a complete causal chain visible in the Omium dashboard.
 
-**Option B — demo-only override:**
+When `OMIUM_API_KEY` is not set, spans are emitted to the local Jaeger instance at `JAEGER_ENDPOINT`.
 
-Judges can verify the webhook fires by watching the backend console.
-The JWT is valid; only the host needs to be reachable.
+---
 
-```bash
-python backend/override_checkin.py --user-id 1 --days-overdue 14
-# Watch backend logs for "lifeline.step_day14 → contact1_notified"
-```
+## Built With
+
+- [Kiro IDE](https://kiro.dev) with Claude Opus 4.6 as the agent
+- [Google Gemini 2.5 Flash](https://aistudio.google.com) — LLM inference + Google Search grounding
+- [Supabase](https://supabase.com) — hosted PostgreSQL
+- [Resend](https://resend.com) — transactional email
+- [Brevo](https://brevo.com) — SMS dispatch
+- [Omium](https://omium.dev) — distributed tracing
+
+---
 
 ## Demo Video
 
-<!-- TODO: Record and upload 5-minute demo video before submission -->
-<!-- WARNING: This link MUST be filled before submitting -->
-[5-minute walkthrough — RECORD BEFORE SUBMISSION]
 
-The demo shows:
-1. PDF upload triggering the Vault Agent extraction pipeline
-2. Will Agent conflict analysis with live Google Search grounding
-3. Lifeline escalation triggered by simulated missed check-in
-4. Trusted contact webhook response halting escalation
-5. Omium dashboard showing the complete causal trace chain
